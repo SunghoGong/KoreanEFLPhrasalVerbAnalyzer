@@ -1,7 +1,8 @@
 # 필요한 라이브러리 설치 (Colab에서 한 번 실행)
 # !pip install pymupdf spacy wtpsplit stanza pandas tqdm torch
 # !python -m spacy download en_core_web_sm
-# !apt-get install -y unzip  # ZIP 해제용 (이미 설치되어 있을 수 있음)
+# !pip install pdf2image pytesseract  # OCR 필요 시
+# !apt-get install -y unzip  # ZIP 해제용
 
 import glob
 import os
@@ -20,239 +21,231 @@ import gc
 from google.colab import files  # Colab 파일 업로드용
 import subprocess  # ZIP 해제용
 
-# 1. PDF 파일 업로드 (사용자가 직접 업로드)
-print("PDF 파일을 업로드하세요. (하나의 PDF, 여러 PDF, 또는 ZIP 압축 폴더 가능)")
-uploaded = files.upload()
+def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.xlsx",
+                          output_excel='교과서count.xlsx',
+                          output_txt='refined_text.txt'):
+    """
+    한국 영어 교과서 PDF를 업로드하고, 구동사 분석을 수행하는 함수.
+    - phrasal_verb_file: 구동사 리스트 Excel 파일 경로 (개인 설정)
+    - output_excel: 출력 Excel 파일 이름
+    - output_txt: 정제된 TXT 파일 이름
+    """
 
-# 업로드된 파일 처리
-pdf_files = []  # 최종 PDF 목록
-upload_folder = '/content/uploaded_pdfs/'  # 임시 폴더
-if not os.path.exists(upload_folder):
-    os.makedirs(upload_folder)
+    # 1. PDF 파일 업로드 (사용자가 직접 업로드)
+    print("PDF 파일을 업로드하세요. (하나의 PDF, 여러 PDF, 또는 ZIP 압축 폴더 가능)")
+    uploaded = files.upload()
 
-for filename in uploaded.keys():
-    file_path = os.path.join(upload_folder, filename)
-    with open(file_path, 'wb') as f:
-        f.write(uploaded[filename])
-    
-    if filename.endswith('.pdf'):
-        # 단일 PDF 또는 여러 PDF
-        pdf_files.append(file_path)
-    elif filename.endswith('.zip'):
-        # ZIP 파일 해제
-        print(f"ZIP 파일 해제 중: {filename}")
-        unzip_command = f"unzip -o {file_path} -d {upload_folder}"
-        subprocess.run(unzip_command, shell=True)
-        # 해제된 PDF 찾기
-        extracted_pdfs = glob.glob(upload_folder + '**/*.pdf', recursive=True)
-        pdf_files.extend(extracted_pdfs)
+    # 업로드된 파일 처리
+    pdf_files = []  # 최종 PDF 목록
+    upload_folder = '/content/uploaded_pdfs/'  # 임시 폴더
+    if not os.path.exists(upload_folder):
+        os.makedirs(upload_folder)
 
-# PDF 파일 목록 확인
-file_list = pdf_files
-print("업로드된 PDF 파일 수:", len(file_list))
+    for filename in uploaded.keys():
+        file_path = os.path.join(upload_folder, filename)
+        with open(file_path, 'wb') as f:
+            f.write(uploaded[filename])
+        
+        if filename.endswith('.pdf'):
+            pdf_files.append(file_path)
+        elif filename.endswith('.zip'):
+            print(f"ZIP 파일 해제 중: {filename}")
+            unzip_command = f"unzip -o {file_path} -d {upload_folder}"
+            subprocess.run(unzip_command, shell=True)
+            extracted_pdfs = glob.glob(upload_folder + '**/*.pdf', recursive=True)
+            pdf_files.extend(extracted_pdfs)
 
-# PDF 파일 이름만 추출 (확장자 제외)
-pure_names = []
-for f in file_list:
-    name_without_ext = os.path.splitext(os.path.basename(f))[0]
-    pure_names.append(name_without_ext)
-print("파일 이름 목록:", pure_names)
+    file_list = pdf_files
+    print("업로드된 PDF 파일 수:", len(file_list))
 
-# 2. PDF를 TXT로 변환하는 함수 (이전과 동일)
-def save_pdf_to_text(pdf_filename, output_filename):
-    print(f"PDF 파일 로딩 중: {pdf_filename}")
-    start_time = time.time()
+    # PDF 파일 이름만 추출 (확장자 제외)
+    pure_names = []
+    for f in file_list:
+        name_without_ext = os.path.splitext(os.path.basename(f))[0]
+        pure_names.append(name_without_ext)
+    print("파일 이름 목록:", pure_names)
 
-    # spaCy 모델 로드 (영어 문장 분리용)
-    nlp = spacy.load("en_core_web_sm")
-    # 불필요한 기능 끄기 (속도 향상)
-    disable_list = ["ner", "tagger", "attribute_ruler", "lemmatizer"]
-    if "senter" in nlp.pipe_names:
-        disable_list.append("parser")
-    nlp.disable_pipes(disable_list)
-    if "senter" not in nlp.pipe_names and "parser" not in nlp.pipe_names:
-        nlp.add_pipe("senter")
+    # 2. PDF를 TXT로 변환하는 함수
+    def save_pdf_to_text(pdf_filename, output_filename):
+        print(f"PDF 파일 로딩 중: {pdf_filename}")
+        start_time = time.time()
 
-    print("NLP 설정 완료. 변환 시작...")
+        nlp = spacy.load("en_core_web_sm")
+        disable_list = ["ner", "tagger", "attribute_ruler", "lemmatizer"]
+        if "senter" in nlp.pipe_names:
+            disable_list.append("parser")
+        nlp.disable_pipes(disable_list)
+        if "senter" not in nlp.pipe_names and "parser" not in nlp.pipe_names:
+            nlp.add_pipe("senter")
 
-    # PDF 열기
-    doc = fitz.open(pdf_filename)
-    sentence_count = 0
+        print("NLP 설정 완료. 변환 시작...")
 
-    # 출력 파일 열기
-    with open(output_filename, "w", encoding="utf-8") as f:
-        page_count = 0
-        for page in doc:
-            text = page.get_text()
-            # 텍스트를 spaCy로 처리해서 문장 분리
-            spacy_doc = nlp(text)
-            for sent in spacy_doc.sents:
-                clean_sent = sent.text.strip()
-                if clean_sent:
-                    f.write(clean_sent + "\n")
-                    sentence_count += 1
-            page_count += 1
+        doc = fitz.open(pdf_filename)
+        sentence_count = 0
 
-    doc.close()
-    end_time = time.time()
-    print(f"저장 완료: {output_filename}")
-    print(f"소요 시간: {end_time - start_time:.2f}초")
-    print(f"저장된 문장 수: {sentence_count}개")
+        with open(output_filename, "w", encoding="utf-8") as f:
+            for page in doc:
+                text = page.get_text()
+                spacy_doc = nlp(text)
+                for sent in spacy_doc.sents:
+                    clean_sent = sent.text.strip()
+                    if clean_sent:
+                        f.write(clean_sent + "\n")
+                        sentence_count += 1
 
-# 각 PDF를 TXT로 변환
-for each in pure_names:
-    # 업로드된 PDF 경로 사용
-    input_pdf = next((f for f in file_list if os.path.basename(f).startswith(each)), None)
-    if input_pdf:
-        output_txt = each + '.txt'
-        try:
-            save_pdf_to_text(input_pdf, output_txt)
-        except Exception as e:
-            print(f"오류: {e}")
+        doc.close()
+        end_time = time.time()
+        print(f"저장 완료: {output_filename}")
+        print(f"소요 시간: {end_time - start_time:.2f}초")
+        print(f"저장된 문장 수: {sentence_count}개")
 
-# 3. TXT 파일들 합치기 (이전과 동일)
-txt_files = glob.glob('/content/*.txt')
-print(f"TXT 파일 수: {len(txt_files)}")
+    # 각 PDF를 TXT로 변환
+    for each in pure_names:
+        input_pdf = next((f for f in file_list if os.path.basename(f).startswith(each)), None)
+        if input_pdf:
+            output_txt_single = each + '.txt'
+            try:
+                save_pdf_to_text(input_pdf, output_txt_single)
+            except Exception as e:
+                print(f"오류: {e}")
 
-with open('merged_all.txt', 'w', encoding='utf-8') as outfile:
-    for file_path in txt_files:
-        with open(file_path, 'r', encoding='utf-8') as infile:
-            content = infile.read()
-            outfile.write(content)
-            outfile.write('\n')
+    # 3. TXT 파일들 합치기
+    txt_files = glob.glob('/content/*.txt')
+    print(f"TXT 파일 수: {len(txt_files)}")
 
-# 4. 합친 텍스트 불러오기 (이전과 동일)
-with open('merged_all.txt', 'r', encoding='utf-8') as file:
-    allText = file.read()
+    with open('merged_all.txt', 'w', encoding='utf-8') as outfile:
+        for file_path in txt_files:
+            with open(file_path, 'r', encoding='utf-8') as infile:
+                content = infile.read()
+                outfile.write(content)
+                outfile.write('\n')
 
-# 5. 텍스트 정제 (이전과 동일)
-# 특수 문자 치환
-testtext = copy.deepcopy(allText)
-testtext = testtext.replace("’", "'")
-testtext = testtext.replace('‘', "'")
-testtext = testtext.replace('“', '"')
-testtext = testtext.replace('”', '"')
-testtext = testtext.replace('á', 'a')
-testtext = testtext.replace('ﬂ', 'fl')
-testtext = testtext.replace('é', 'e')
-testtext = testtext.replace('ﬁ', 'fi')
-testtext = testtext.replace('è', 'e')
-testtext = testtext.replace('É', 'E')
-testtext = testtext.replace('ü', 'u')
-testtext = testtext.replace('…', '...')
+    # 4. 합친 텍스트 불러오기
+    with open('merged_all.txt', 'r', encoding='utf-8') as file:
+        allText = file.read()
 
-# 한국어, 숫자, 특수문자 제거 (re.sub 대신 단계별)
-testtext = re.sub(r"[가-힣]+", " ", testtext)
-pattern = r"['!\"#$%&()*+,\-./:;<=>?@\[\\\]^_`{|}~]+"
-testtext = re.sub(pattern, " ", testtext)
-testtext = re.sub(r"\s+", " ", testtext)
-testtext = re.sub(r'\s\n', ' ', testtext)
-testtext = testtext.strip()
+    # 5. 텍스트 정제
+    testtext = copy.deepcopy(allText)
+    testtext = testtext.replace("’", "'")
+    testtext = testtext.replace('‘', "'")
+    testtext = testtext.replace('“', '"')
+    testtext = testtext.replace('”', '"')
+    testtext = testtext.replace('á', 'a')
+    testtext = testtext.replace('ﬂ', 'fl')
+    testtext = testtext.replace('é', 'e')
+    testtext = testtext.replace('ﬁ', 'fi')
+    testtext = testtext.replace('è', 'e')
+    testtext = testtext.replace('É', 'E')
+    testtext = testtext.replace('ü', 'u')
+    testtext = testtext.replace('…', '...')
 
-# 비영어 단어 목록 만들기
-words = re.split(r"\s+", allText)
-unique_words = []
-seen = set()
-for word in words:
-    if word and word not in seen:
-        unique_words.append(word)
-        seen.add(word)
-unique_words.sort(key=len, reverse=True)
+    testtext = re.sub(r"[가-힣]+", " ", testtext)
+    pattern = r"['!\"#$%&()*+,\-./:;<=>?@\[\\\]^_`{|}~]+"
+    testtext = re.sub(pattern, " ", testtext)
+    testtext = re.sub(r"\s+", " ", testtext)
+    testtext = re.sub(r'\s\n', ' ', testtext)
+    testtext = testtext.strip()
 
-# 비영어 단어 제거
-for word in unique_words:
-    testtext = testtext.replace(word, " ")
+    words = re.split(r"\s+", allText)
+    unique_words = []
+    seen = set()
+    for word in words:
+        if word and word not in seen:
+            unique_words.append(word)
+            seen.add(word)
+    unique_words.sort(key=len, reverse=True)
 
-# 정제된 텍스트 저장 (결과물 1)
-with open("refined_text.txt", "w", encoding="utf-8") as f:
-    f.write(testtext)
+    for word in unique_words:
+        testtext = testtext.replace(word, " ")
 
-# 6. 문장 분리 (wtpsplit 사용) (이전과 동일)
-sat_sm = SaT("sat-12l-sm")
-sat_sm.half().to("cuda")  # GPU 사용 (속도 향상, 없으면 CPU로)
+    # 정제된 텍스트 저장 (결과물 1: output_txt 사용)
+    with open(output_txt, "w", encoding="utf-8") as f:
+        f.write(testtext)
 
-seg_list = sat_sm.split(testtext)
-clean_seg_list = []
-for seg in seg_list:
-    seg = re.sub(r'\s+', ' ', seg)
-    seg = seg.strip()
-    if seg:
-        clean_seg_list.append(seg)
-seg_list = clean_seg_list
+    # 6. 문장 분리
+    sat_sm = SaT("sat-12l-sm")
+    sat_sm.half().to("cuda")
 
-# 7. 구동사 리스트 로드 (경로 변경 가능, 이전과 동일)
-phrasal_verb_file = "/content/drive/MyDrive/영어교과서/Phrasal Verb List Updating Project.xlsx"  # 필요 시 업로드나 경로 변경
-df = pd.read_excel(phrasal_verb_file)
-phrasalVerb = df['Phrasal verb'].tolist()
-phrasalVerb_set = set(phrasalVerb)  # 빠른 검색용
+    seg_list = sat_sm.split(testtext)
+    clean_seg_list = []
+    for seg in seg_list:
+        seg = re.sub(r'\s+', ' ', seg)
+        seg = seg.strip()
+        if seg:
+            clean_seg_list.append(seg)
+    seg_list = clean_seg_list
 
-# 딕셔너리 초기화
-verbDict = {}
-sentDict = {}
-for verb in phrasalVerb:
-    verbDict[verb] = 0
-    sentDict[verb] = []
+    # 7. 구동사 리스트 로드 (개인 설정: phrasal_verb_file 사용)
+    df = pd.read_excel(phrasal_verb_file)
+    phrasalVerb = df['Phrasal verb'].tolist()
+    phrasalVerb_set = set(phrasalVerb)
 
-# 문장 길이 정렬 (짧은 것부터)
-seg_list.sort(key=len)
+    verbDict = {}
+    sentDict = {}
+    for verb in phrasalVerb:
+        verbDict[verb] = 0
+        sentDict[verb] = []
 
-# 청크 나누기 (메모리 관리)
-def list_chunk(lst, n):
-    chunks = []
-    for i in range(0, len(lst), n):
-        chunk = lst[i:i+n]
-        chunks.append(chunk)
-    return chunks
+    seg_list.sort(key=len)
 
-list_chunked = list_chunk(lst=seg_list, n=200000)
+    def list_chunk(lst, n):
+        chunks = []
+        for i in range(0, len(lst), n):
+            chunk = lst[i:i+n]
+            chunks.append(chunk)
+        return chunks
 
-# 8. Stanza 설정 (dependency parsing) (이전과 동일)
-stanza.download('en')
-nlp = stanza.Pipeline('en', processors='tokenize,lemma,pos,depparse', tokenize_no_ssplit=True, verbose=True, use_gpu=True)
+    list_chunked = list_chunk(lst=seg_list, n=200000)
 
-TARGET_DEPS = {'prt', 'advmod', 'compound:prt', 'prep'}
-batch_size = 1000
+    # 8. Stanza 설정
+    stanza.download('en')
+    nlp = stanza.Pipeline('en', processors='tokenize,lemma,pos,depparse', tokenize_no_ssplit=True, verbose=True, use_gpu=True)
 
-print("분석 시작...")
+    TARGET_DEPS = {'prt', 'advmod', 'compound:prt', 'prep'}
+    batch_size = 1000
 
-for chunk_idx in range(len(list_chunked)):
-    current_list = list_chunked[chunk_idx]
-    total_sents = len(current_list)
-    print(f"Chunk {chunk_idx} 시작 - 문장 수: {total_sents}")
+    print("분석 시작...")
 
-    for i in tqdm(range(0, total_sents, batch_size)):
-        batch = current_list[i:i + batch_size]
-        docs = nlp(batch)
+    for chunk_idx in range(len(list_chunked)):
+        current_list = list_chunked[chunk_idx]
+        total_sents = len(current_list)
+        print(f"Chunk {chunk_idx} 시작 - 문장 수: {total_sents}")
 
-        for sentence in docs.sentences:
-            for head, relation, dep in sentence.dependencies:
-                if head.upos == 'VERB' and relation in TARGET_DEPS:
-                    lemma_key = f"{head.lemma} {dep.lemma}"
-                    if lemma_key in verbDict:
-                        verbDict[lemma_key] += 1
-                        sentDict[lemma_key].append(sentence.text)
+        for i in tqdm(range(0, total_sents, batch_size)):
+            batch = current_list[i:i + batch_size]
+            docs = nlp(batch)
 
-        del docs
-        gc.collect()
-        torch.cuda.empty_cache()
+            for sentence in docs.sentences:
+                for head, relation, dep in sentence.dependencies:
+                    if head.upos == 'VERB' and relation in TARGET_DEPS:
+                        lemma_key = f"{head.lemma} {dep.lemma}"
+                        if lemma_key in verbDict:
+                            verbDict[lemma_key] += 1
+                            sentDict[lemma_key].append(sentence.text)
 
-print("분석 완료!")
+            del docs
+            gc.collect()
+            torch.cuda.empty_cache()
 
-# 9. 결과 데이터프레임 만들기 (이전과 동일)
-verb_list = []
-count_list = []
-sentences_list = []
-for key in verbDict:
-    verb_list.append(key)
-    count_list.append(verbDict[key])
-    unique_sentences = list(set(sentDict[key]))  # 중복 제거
-    sentences_list.append('\n'.join(unique_sentences))
+    print("분석 완료!")
 
-df_count = pd.DataFrame({'Verb': verb_list, 'Count': count_list})
-df_sentences = pd.DataFrame({'Verb': verb_list, 'Sentences': sentences_list})
-df_final = pd.merge(df_count, df_sentences, on='Verb')
+    # 9. 결과 데이터프레임 만들기
+    verb_list = []
+    count_list = []
+    sentences_list = []
+    for key in verbDict:
+        verb_list.append(key)
+        count_list.append(verbDict[key])
+        unique_sentences = list(set(sentDict[key]))
+        sentences_list.append('\n'.join(unique_sentences))
 
-# 10. 엑셀 저장 (결과물 2)
-file_name = '교과서count.xlsx'
-df_final.to_excel(file_name, index=False)
-print(f"엑셀 저장 완료: {file_name}")
+    df_count = pd.DataFrame({'Verb': verb_list, 'Count': count_list})
+    df_sentences = pd.DataFrame({'Verb': verb_list, 'Sentences': sentences_list})
+    df_final = pd.merge(df_count, df_sentences, on='Verb')
+
+    # 10. 엑셀 저장 (결과물 2: output_excel 사용)
+    df_final.to_excel(output_excel, index=False)
+    print(f"엑셀 저장 완료: {output_excel}")
+
+# 사용 예시: 한 줄로 호출 (개인 환경 설정 전달)
+# analyze_phrasal_verbs(phrasal_verb_file='/your/custom/path/to/excel.xlsx', output_excel='my_count.xlsx')
