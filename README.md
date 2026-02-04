@@ -25,8 +25,8 @@ A tool for analyzing phrasal verbs in Korean English textbooks: Upload PDFs (sin
 
 ```python
 # 1. 깃허브 코드 가져오기 & 환경 설정
-!git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git  # 본인 주소로 변경!
-%cd YOUR_REPO_NAME
+!git clone https://github.com/SunghoGong/KoreanEFLPhrasalVerbAnalyzer.git  # 본인 주소로 변경!
+%cd KoreanEFLPhrasalVerbAnalyzer
 
 print("📦 라이브러리 설치 중...")
 !pip install -r requirements.txt
@@ -65,8 +65,8 @@ if os.path.exists("result.xlsx"):
 ### 1. 설치
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-cd YOUR_REPO_NAME
+git clone https://github.com/SunghoGong/KoreanEFLPhrasalVerbAnalyzer.git
+cd KoreanEFLPhrasalVerbAnalyzer
 pip install -r requirements.txt
 
 ```
