@@ -246,6 +246,3 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
     # 10. 엑셀 저장 (결과물 2: output_excel 사용)
     df_final.to_excel(output_excel, index=False)
     print(f"엑셀 저장 완료: {output_excel}")
-
-# 사용 예시: 한 줄로 호출 (개인 환경 설정 전달)
-# analyze_phrasal_verbs(phrasal_verb_file='/your/custom/path/to/excel.xlsx', output_excel='my_count.xlsx')
