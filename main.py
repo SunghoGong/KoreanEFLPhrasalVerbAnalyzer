@@ -1,9 +1,3 @@
-# 필요한 라이브러리 설치 (Colab에서 한 번 실행)
-# !pip install pymupdf spacy wtpsplit stanza pandas tqdm torch
-# !python -m spacy download en_core_web_sm
-# !pip install pdf2image pytesseract  # OCR 필요 시
-# !apt-get install -y unzip  # ZIP 해제용
-
 import glob
 import os
 import fitz  # PyMuPDF
