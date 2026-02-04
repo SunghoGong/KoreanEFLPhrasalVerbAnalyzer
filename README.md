@@ -14,5 +14,6 @@ A tool for analyzing phrasal verbs in Korean English textbooks: Upload PDFs (sin
 !git clone https://github.com/당신의아이디/KoreanEFLPhrasalVerbAnalyzer.git
 %cd KoreanEFLPhrasalVerbAnalyzer
 
-# 2. 한 줄 실행 (PDF 업로드 창 바로 뜸)
+# 2. 실행 (PDF 업로드 창 바로 뜸)
+from main import analyze_phrasal_verbs
 analyze_phrasal_verbs()
