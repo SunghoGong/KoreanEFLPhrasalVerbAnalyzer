@@ -22,7 +22,8 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
     한국 영어 교과서 PDF를 업로드하고, 구동사 분석을 수행하는 함수.
     - phrasal_verb_file: 구동사 리스트 Excel 파일 경로 (개인 설정)
     - output_excel: 출력 Excel 파일 이름
-    - output_txt: 정제된 TXT 파일 이름
+    - output_txt: 정제된 TXT 파일 이름 (최종 저장물)
+    이 버전은 중간 텍스트 파일 저장/불러오기를 건너뜁니다.
     """
 
     # 1. PDF 파일 업로드 (사용자가 직접 업로드)
@@ -40,85 +41,61 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
         with open(file_path, 'wb') as f:
             f.write(uploaded[filename])
         
-        if filename.endswith('.pdf'):
+        if filename.lower().endswith('.pdf'):
             pdf_files.append(file_path)
-        elif filename.endswith('.zip'):
+        elif filename.lower().endswith('.zip'):
             print(f"ZIP 파일 해제 중: {filename}")
             unzip_command = f"unzip -o {file_path} -d {upload_folder}"
             subprocess.run(unzip_command, shell=True)
-            extracted_pdfs = glob.glob(upload_folder + '**/*.pdf', recursive=True)
+            extracted_pdfs = glob.glob(os.path.join(upload_folder, '**', '*.pdf'), recursive=True)
             pdf_files.extend(extracted_pdfs)
 
-    file_list = pdf_files
-    print("업로드된 PDF 파일 수:", len(file_list))
+    print("업로드된 PDF 파일 수:", len(pdf_files))
+    if len(pdf_files) == 0:
+        print("처리할 PDF가 없습니다. 함수를 종료합니다.")
+        return
 
-    # PDF 파일 이름만 추출 (확장자 제외)
-    pure_names = []
-    for f in file_list:
-        name_without_ext = os.path.splitext(os.path.basename(f))[0]
-        pure_names.append(name_without_ext)
-    print("파일 이름 목록:", pure_names)
+    # 2. spaCy 세팅 (문장 분리용) - 한 번만 초기화
+    print("spaCy 로딩 및 설정...")
+    nlp_spacy = spacy.load("en_core_web_sm")
+    disable_list = ["ner", "tagger", "attribute_ruler", "lemmatizer"]
+    if "senter" in nlp_spacy.pipe_names:
+        disable_list.append("parser")
+    nlp_spacy.disable_pipes(disable_list)
+    if "senter" not in nlp_spacy.pipe_names and "parser" not in nlp_spacy.pipe_names:
+        nlp_spacy.add_pipe("senter")
+    print("spaCy 준비 완료.")
 
-    # 2. PDF를 TXT로 변환하는 함수
-    def save_pdf_to_text(pdf_filename, output_filename):
-        print(f"PDF 파일 로딩 중: {pdf_filename}")
-        start_time = time.time()
-
-        nlp = spacy.load("en_core_web_sm")
-        disable_list = ["ner", "tagger", "attribute_ruler", "lemmatizer"]
-        if "senter" in nlp.pipe_names:
-            disable_list.append("parser")
-        nlp.disable_pipes(disable_list)
-        if "senter" not in nlp.pipe_names and "parser" not in nlp.pipe_names:
-            nlp.add_pipe("senter")
-
-        print("NLP 설정 완료. 변환 시작...")
-
-        doc = fitz.open(pdf_filename)
-        sentence_count = 0
-
-        with open(output_filename, "w", encoding="utf-8") as f:
+    # 3. PDF -> 문장 리스트(메모리)로 추출 (중간 파일 저장 없음)
+    sentences_all = []
+    total_pages = 0
+    for pdf_path in pdf_files:
+        try:
+            print(f"PDF 파일 로딩 중: {pdf_path}")
+            start_time = time.time()
+            doc = fitz.open(pdf_path)
             for page in doc:
                 text = page.get_text()
-                spacy_doc = nlp(text)
+                if not text:
+                    continue
+                spacy_doc = nlp_spacy(text)
                 for sent in spacy_doc.sents:
                     clean_sent = sent.text.strip()
                     if clean_sent:
-                        f.write(clean_sent + "\n")
-                        sentence_count += 1
+                        sentences_all.append(clean_sent)
+                total_pages += 1
+            doc.close()
+            end_time = time.time()
+            print(f"처리 완료: {pdf_path} (소요: {end_time - start_time:.2f}s)")
+        except Exception as e:
+            print(f"오류로 인해 건너뜀 ({pdf_path}): {e}")
 
-        doc.close()
-        end_time = time.time()
-        print(f"저장 완료: {output_filename}")
-        print(f"소요 시간: {end_time - start_time:.2f}초")
-        print(f"저장된 문장 수: {sentence_count}개")
+    print(f"추출된 전체 문장 수: {len(sentences_all)} (총 페이지: {total_pages})")
 
-    # 각 PDF를 TXT로 변환
-    for each in pure_names:
-        input_pdf = next((f for f in file_list if os.path.basename(f).startswith(each)), None)
-        if input_pdf:
-            output_txt_single = each + '.txt'
-            try:
-                save_pdf_to_text(input_pdf, output_txt_single)
-            except Exception as e:
-                print(f"오류: {e}")
+    # 4. 전체 텍스트(문장 단위 합치기)
+    allText = "\n".join(sentences_all)
 
-    # 3. TXT 파일들 합치기
-    txt_files = glob.glob('/content/*.txt')
-    print(f"TXT 파일 수: {len(txt_files)}")
-
-    with open('merged_all.txt', 'w', encoding='utf-8') as outfile:
-        for file_path in txt_files:
-            with open(file_path, 'r', encoding='utf-8') as infile:
-                content = infile.read()
-                outfile.write(content)
-                outfile.write('\n')
-
-    # 4. 합친 텍스트 불러오기
-    with open('merged_all.txt', 'r', encoding='utf-8') as file:
-        allText = file.read()
-
-    # 5. 텍스트 정제
+    # 5. 텍스트 정제 (원래 로직 유지)
     testtext = copy.deepcopy(allText)
     testtext = testtext.replace("’", "'")
     testtext = testtext.replace('‘', "'")
@@ -140,6 +117,7 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
     testtext = re.sub(r'\s\n', ' ', testtext)
     testtext = testtext.strip()
 
+    # 원래 코드의 unique word 제거 로직 유지 (필요 없으면 주석 처리 가능)
     words = re.split(r"\s+", allText)
     unique_words = []
     seen = set()
@@ -152,13 +130,18 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
     for word in unique_words:
         testtext = testtext.replace(word, " ")
 
-    # 정제된 텍스트 저장 (결과물 1: output_txt 사용)
+    # 정제된 텍스트 저장 (결과물 1: output_txt)
     with open(output_txt, "w", encoding="utf-8") as f:
         f.write(testtext)
+    print(f"정제된 텍스트 저장 완료: {output_txt}")
 
-    # 6. 문장 분리
+    # 6. 문장 분리 (SaT) — testtext 사용
     sat_sm = SaT("sat-12l-sm")
-    sat_sm.half().to("cuda")
+    try:
+        sat_sm.half().to("cuda")
+    except Exception:
+        # CUDA가 없거나 이동 실패 시 경고만 출력하고 계속 진행
+        print("GPU로 SaT 이동 실패(또는 CUDA 없음). CPU로 실행합니다.")
 
     seg_list = sat_sm.split(testtext)
     clean_seg_list = []
@@ -169,7 +152,7 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
             clean_seg_list.append(seg)
     seg_list = clean_seg_list
 
-    # 7. 구동사 리스트 로드 (개인 설정: phrasal_verb_file 사용)
+    # 7. 구동사 리스트 로드
     df = pd.read_excel(phrasal_verb_file)
     phrasalVerb = df['Phrasal verb'].tolist()
     phrasalVerb_set = set(phrasalVerb)
@@ -198,7 +181,7 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
     TARGET_DEPS = {'prt', 'advmod', 'compound:prt', 'prep'}
     batch_size = 1000
 
-    print("분석 시작...")
+    print("구동사 분석 시작...")
 
     for chunk_idx in range(len(list_chunked)):
         current_list = list_chunked[chunk_idx]
@@ -219,9 +202,12 @@ def analyze_phrasal_verbs(phrasal_verb_file="Phrasal Verb List Updating Project.
 
             del docs
             gc.collect()
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
 
-    print("분석 완료!")
+    print("구동사 분석 완료!")
 
     # 9. 결과 데이터프레임 만들기
     verb_list = []
