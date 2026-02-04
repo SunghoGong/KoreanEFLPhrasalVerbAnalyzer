@@ -18,4 +18,8 @@ A tool for analyzing phrasal verbs in Korean English textbooks: Upload PDFs (sin
 from main import analyze_phrasal_verbs
 
 # 사용 예시: 한 줄로 호출 (개인 환경 설정 전달)
-analyze_phrasal_verbs(phrasal_verb_file='/your/custom/path/to/excel.xlsx', output_excel='my_count.xlsx')
+analyze_phrasal_verbs(
+    phrasal_verb_file="Phrasal Verb List Updating Project.xlsx",
+    output_excel="*.xlsx",  # 결과 엑셀파일
+    output_txt="*.txt"      # 정제된 텍스트 파일
+)
