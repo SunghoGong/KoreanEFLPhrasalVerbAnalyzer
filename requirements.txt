@@ -1,0 +1,8 @@
+pymupdf
+spacy
+wtpsplit
+stanza
+pandas
+tqdm
+torch
+openpyxl
